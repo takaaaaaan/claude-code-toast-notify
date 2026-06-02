@@ -1,0 +1,7 @@
+# local settings backups produced by the installer
+settings.json.bak
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store

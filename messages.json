@@ -1,0 +1,17 @@
+{
+  "en": {
+    "session_start": "Session started",
+    "session_completed": "Session completed",
+    "response_finished": "Response finished"
+  },
+  "ja": {
+    "session_start": "セッションを開始しました",
+    "session_completed": "セッションが完了しました",
+    "response_finished": "応答が完了しました"
+  },
+  "ko": {
+    "session_start": "세션을 시작했습니다",
+    "session_completed": "세션이 완료되었습니다",
+    "response_finished": "응답이 완료되었습니다"
+  }
+}
