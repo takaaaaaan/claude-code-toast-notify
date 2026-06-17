@@ -547,8 +547,6 @@ $repo = Split-Path -Parent $PSScriptRoot
 $tmp = Join-Path $env:TEMP ('cctoast-install-' + [guid]::NewGuid().ToString('N'))
 $appId = 'Claude.Code.ToastNotify.Test'
 $scheme = 'cctoasttest'
-'{ "theme":"dark", "hooks": { "Stop": [ { "hooks":[ {"type":"command","command":"echo other"} ] } ] } }' |
-    Set-Content (Join-Path ($tmp + '_seed') 'x') -Encoding ascii -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 '{ "theme":"dark", "hooks": { "Stop": [ { "hooks":[ {"type":"command","command":"echo other"} ] } ] } }' |
     Set-Content (Join-Path $tmp 'settings.json') -Encoding utf8
