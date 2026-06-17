@@ -7,7 +7,8 @@ $log = Join-Path $work 'code-args.txt'
 # fake `code` that records its args
 "@echo off`r`n>>`"$log`" echo %*" | Set-Content (Join-Path $work 'code.cmd') -Encoding ascii
 
-$target = 'C:\Users\taka2\Desktop\final-project\metabolic-twin-fe'
+$target = Join-Path $work 'demo-workspace'
+New-Item -ItemType Directory -Path $target | Out-Null
 . "$PSScriptRoot\..\lib\cctoast-lib.ps1"
 $uri = New-ToastLaunchUri $target
 
@@ -17,6 +18,6 @@ powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\..\cctoast-open.ps1" $ur
 Assert-True (Test-Path $log) "fake code was invoked"
 $line = Get-Content $log -Raw
 Assert-True ($line -match '--reuse-window') "code called with --reuse-window"
-Assert-True ($line -match 'metabolic-twin-fe') "code called with the target path"
+Assert-True ($line -match 'demo-workspace') "code called with the target path"
 Remove-Item $work -Recurse -Force
 Write-Host "handler.tests PASSED"
