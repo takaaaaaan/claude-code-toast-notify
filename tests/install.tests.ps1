@@ -23,7 +23,7 @@ try {
     Assert-Equal $s.theme 'dark' "unrelated setting preserved"
     $stop = @($s.hooks.Stop | Where-Object { $_.hooks[0].command -match 'claude-hook-toast' })
     Assert-Equal $stop.Count 1 "exactly one of our Stop hooks (idempotent across re-run)"
-    Assert-True ($stop[0].hooks[0].command -match ' ko$') "latest lang wins"
+    Assert-True ($stop[0].hooks[0].command -match ' ko ') "latest lang wins"
 
     $notif = @($s.hooks.Notification | Where-Object { $_.hooks[0].command -match 'claude-hook-toast' })
     Assert-Equal $notif.Count 1 "Notification hook merged"
@@ -31,6 +31,9 @@ try {
     Assert-True ($stop[0].hooks[0].command -match '/claude-hook-toast\.ps1') "hook path uses forward slashes"
 
     Assert-True (Test-Path (Join-Path $tmp 'settings.json.bak')) "settings.json backup created"
+
+    Assert-True ($stop[0].hooks[0].command -match '-AppId "Claude\.Code\.ToastNotify\.Test"') "hook command passes custom AppId"
+    Assert-True ($stop[0].hooks[0].command -match '-Scheme "cctoasttest"') "hook command passes custom Scheme"
 
     Write-Host "install.tests PASSED"
 }

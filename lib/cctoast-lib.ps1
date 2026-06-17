@@ -2,9 +2,9 @@
 # ASCII-only source (CP949 safety).
 
 function New-ToastLaunchUri {
-    param([string]$Cwd)
+    param([string]$Cwd, [string]$Scheme = 'cctoast')
     $enc = [System.Uri]::EscapeDataString([string]$Cwd)
-    return "cctoast://open?path=$enc"
+    return "${Scheme}://open?path=$enc"
 }
 
 function ConvertFrom-ToastLaunchUri {

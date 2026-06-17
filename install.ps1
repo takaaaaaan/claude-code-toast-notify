@@ -36,7 +36,7 @@ Set-ItemProperty -Path $cmdKey -Name '(default)' -Value "powershell -ExecutionPo
 
 # 4) merge hooks with an install-time absolute, forward-slash path
 $ps1Path = (Join-Path $ClaudeDir 'claude-hook-toast.ps1') -replace '\\', '/'
-$command = "powershell -ExecutionPolicy Bypass -File `"$ps1Path`" $Lang"
+$command = "powershell -ExecutionPolicy Bypass -File `"$ps1Path`" $Lang -AppId `"$AppId`" -Scheme `"$Scheme`""
 
 $settingsPath = Join-Path $ClaudeDir 'settings.json'
 if (Test-Path -LiteralPath $settingsPath) {

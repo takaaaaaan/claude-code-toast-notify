@@ -1,6 +1,7 @@
 param(
     [string]$Lang = 'en',
-    [string]$AppId = 'Claude.Code.ToastNotify'
+    [string]$AppId = 'Claude.Code.ToastNotify',
+    [string]$Scheme = 'cctoast'
 )
 
 # Claude Code Notification Hook (Windows toast) -- portable version.
@@ -106,7 +107,7 @@ if ([string]::IsNullOrEmpty($message)) { $message = Msg 'response_finished' 'Res
 if ($message.Length -gt $max) { $message = $message.Substring(0, $max).TrimEnd() + ' ...' }
 
 # --- build launch URI + icon URI ------------------------------------------
-$launchUri = if ($cwd) { New-ToastLaunchUri $cwd } else { 'cctoast://open' }
+$launchUri = if ($cwd) { New-ToastLaunchUri $cwd $Scheme } else { "${Scheme}://open" }
 $iconPath  = Join-Path $PSScriptRoot 'icon.png'
 $iconUri   = 'file:///' + ($iconPath -replace '\\', '/')
 $attribution = if ($workspace) { if ($branch) { "$workspace @ $branch" } else { $workspace } } else { '' }
