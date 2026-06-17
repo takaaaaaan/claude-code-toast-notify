@@ -1,73 +1,59 @@
 param(
     [ValidateSet('en', 'ja', 'ko')]
     [string]$Lang = 'en',
-    [string]$ClaudeDir = (Join-Path $env:USERPROFILE '.claude')
+    [string]$ClaudeDir = (Join-Path $env:USERPROFILE '.claude'),
+    [string]$AppId = 'Claude.Code.ToastNotify',
+    [string]$Scheme = 'cctoast'
 )
-
-# Installer for the Claude Code toast notification hook.
-# - Copies claude-hook-toast.ps1 + messages.json into <ClaudeDir>
-# - Merges Notification/Stop hooks into <ClaudeDir>/settings.json
-#   using an absolute, forward-slash path resolved at install time, so the
-#   hook command works from git bash, PowerShell, or cmd with no variable
-#   expansion. Existing settings are preserved; re-running is idempotent.
-
 $ErrorActionPreference = 'Stop'
 $srcDir = $PSScriptRoot
+. (Join-Path $srcDir 'lib\cctoast-lib.ps1')
 
-# 1) copy files
-if (-not (Test-Path -LiteralPath $ClaudeDir)) {
-    New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null
-}
-Copy-Item -LiteralPath (Join-Path $srcDir 'claude-hook-toast.ps1') -Destination $ClaudeDir -Force
-Copy-Item -LiteralPath (Join-Path $srcDir 'messages.json')         -Destination $ClaudeDir -Force
+# 1) copy files (preserve lib/ subdir)
+if (-not (Test-Path -LiteralPath $ClaudeDir)) { New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null }
+if (-not (Test-Path -LiteralPath (Join-Path $ClaudeDir 'lib'))) { New-Item -ItemType Directory -Path (Join-Path $ClaudeDir 'lib') -Force | Out-Null }
+Copy-Item (Join-Path $srcDir 'claude-hook-toast.ps1') $ClaudeDir -Force
+Copy-Item (Join-Path $srcDir 'cctoast-open.ps1')      $ClaudeDir -Force
+Copy-Item (Join-Path $srcDir 'messages.json')         $ClaudeDir -Force
+Copy-Item (Join-Path $srcDir 'icon.png')              $ClaudeDir -Force
+Copy-Item (Join-Path $srcDir 'lib\cctoast-lib.ps1')   (Join-Path $ClaudeDir 'lib') -Force
 
-# 2) build the hook command with a resolved absolute path (forward slashes)
-$ps1Path  = (Join-Path $ClaudeDir 'claude-hook-toast.ps1') -replace '\\', '/'
-$command  = "powershell -ExecutionPolicy Bypass -File `"$ps1Path`" $Lang"
+# 2) register custom AUMID (toast header shows "Claude Code" + icon)
+$aumidKey = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+New-Item -Path $aumidKey -Force | Out-Null
+Set-ItemProperty -Path $aumidKey -Name 'DisplayName' -Value 'Claude Code'
+Set-ItemProperty -Path $aumidKey -Name 'IconUri' -Value (Join-Path $ClaudeDir 'icon.png')
 
-# 3) load (or create) settings.json
+# 3) register the cctoast: protocol -> handler
+$handler = (Join-Path $ClaudeDir 'cctoast-open.ps1')
+$schemeKey = "HKCU:\Software\Classes\$Scheme"
+New-Item -Path $schemeKey -Force | Out-Null
+Set-ItemProperty -Path $schemeKey -Name '(default)' -Value "URL:$Scheme protocol"
+Set-ItemProperty -Path $schemeKey -Name 'URL Protocol' -Value ''
+$cmdKey = "$schemeKey\shell\open\command"
+New-Item -Path $cmdKey -Force | Out-Null
+Set-ItemProperty -Path $cmdKey -Name '(default)' -Value "powershell -ExecutionPolicy Bypass -File `"$handler`" `"%1`""
+
+# 4) merge hooks with an install-time absolute, forward-slash path
+$ps1Path = (Join-Path $ClaudeDir 'claude-hook-toast.ps1') -replace '\\', '/'
+$command = "powershell -ExecutionPolicy Bypass -File `"$ps1Path`" $Lang"
+
 $settingsPath = Join-Path $ClaudeDir 'settings.json'
 if (Test-Path -LiteralPath $settingsPath) {
     $sr = New-Object System.IO.StreamReader($settingsPath, [System.Text.Encoding]::UTF8)
     $text = $sr.ReadToEnd(); $sr.Close()
-    if ([string]::IsNullOrWhiteSpace($text)) { $settings = [PSCustomObject]@{} }
-    else { $settings = $text | ConvertFrom-Json }
-    # backup before modifying
+    $settings = if ([string]::IsNullOrWhiteSpace($text)) { [PSCustomObject]@{} } else { $text | ConvertFrom-Json }
     Copy-Item -LiteralPath $settingsPath -Destination "$settingsPath.bak" -Force
-} else {
-    $settings = [PSCustomObject]@{}
-}
+} else { $settings = [PSCustomObject]@{} }
 
-# 4) merge a hook for one event, removing any prior entry that references our
-#    script (handles upgrades / re-runs without duplicating notifications)
-function Set-Hook($settings, $eventName, $command) {
-    if (-not $settings.PSObject.Properties['hooks']) {
-        $settings | Add-Member -NotePropertyName 'hooks' -NotePropertyValue ([PSCustomObject]@{})
-    }
-    $hooks = $settings.hooks
-    $kept = @()
-    if ($hooks.PSObject.Properties[$eventName]) {
-        foreach ($group in @($hooks.$eventName)) {
-            $refsOurs = $false
-            foreach ($h in @($group.hooks)) {
-                if ($h.command -and $h.command -match 'claude-hook-toast\.ps1') { $refsOurs = $true }
-            }
-            if (-not $refsOurs) { $kept += $group }
-        }
-    }
-    $kept += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $command }) }
-    if ($hooks.PSObject.Properties[$eventName]) { $hooks.$eventName = @($kept) }
-    else { $hooks | Add-Member -NotePropertyName $eventName -NotePropertyValue @($kept) }
-}
+Set-ToastHook $settings 'Notification' $command
+Set-ToastHook $settings 'Stop'         $command
 
-Set-Hook $settings 'Notification' $command
-Set-Hook $settings 'Stop'         $command
-
-# 5) write settings.json back as UTF-8 (no BOM)
 $out = $settings | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($settingsPath, $out, (New-Object System.Text.UTF8Encoding($false)))
 
-Write-Host "Installed toast hook (lang=$Lang)."
-Write-Host "  script   : $ps1Path"
-Write-Host "  settings : $settingsPath"
+Write-Host "Installed toast hook v2 (lang=$Lang)."
+Write-Host "  scripts  : $ClaudeDir"
+Write-Host "  AUMID    : $AppId"
+Write-Host "  protocol : ${Scheme}://"
 Write-Host "Open /hooks in Claude Code once, or restart, to load the new hooks."
