@@ -8,12 +8,13 @@ events. Zero dependencies — uses only built-in Windows + PowerShell.
   - `Stop` event → a snippet of Claude's last response
   - `Notification` event → Claude's message (waiting for input / permission)
 - **Click the toast** to focus the VS Code window for that workspace
+- **Optional companion extension** (`vscode-extension/`) upgrades the click to focus the **exact terminal tab** Claude runs in — even with several terminals in the same folder
 - Modern **ToastGeneric** card with the "Claude Code" header (custom AUMID `Claude.Code.ToastNotify`) and icon (`icon.png`)
 - Works whether your hook shell is **git bash, PowerShell, or cmd**.
 - Labels available in **English / 日本語 / 한국어**.
 
 > Derived from [soulee-dev/claude-code-notify-powershell](https://github.com/soulee-dev/claude-code-notify-powershell).
-> Adds: workspace + branch in the header, last-response body, cross-shell install, i18n, click-to-focus VS Code, custom AUMID.
+> Adds: workspace + branch in the header, last-response body, cross-shell install, i18n, click-to-focus VS Code, exact terminal-tab focus, custom AUMID.
 
 ---
 
@@ -27,7 +28,15 @@ events. Zero dependencies — uses only built-in Windows + PowerShell.
 
 3. **Clicking the toast** runs `cctoast-open.ps1`, which finds the **already-open** VS Code window for that workspace (matched by the folder name in the window title) and brings it to the foreground with `SetForegroundWindow` — **no new window is opened**. Only if no window for that workspace is currently open does it fall back to launching `code "<cwd>"`.
 
-   > **Known limitation**: this focuses the VS Code *window*, not a specific integrated-terminal tab. VS Code exposes no public API for selecting a particular terminal instance. In practice the integrated terminal where Claude runs is already the active panel, so focusing the window returns you to it.
+4. **Exact terminal-tab focus (optional)** — install the companion extension in
+   [`vscode-extension/`](vscode-extension/). The hook embeds its **ancestor PID
+   chain** in the toast URI; VS Code's `Terminal.processId` (the terminal's shell
+   PID) is always in that chain, so the extension focuses the terminal whose
+   `processId` matches — pinpointing Claude's tab even when several terminals
+   share one workspace folder. The PowerShell handler auto-detects the extension
+   (via `~/.vscode/extensions/claude-toast.terminal-focus-*`) and routes the
+   click to it through `vscode://claude-toast.terminal-focus/focus?pids=...`;
+   without the extension it falls back to window focus.
 
    > **Not implemented**: responding to Claude from an input box in the toast. That would require COM activation of the app and unreliable keystroke injection — deliberately left out.
 
