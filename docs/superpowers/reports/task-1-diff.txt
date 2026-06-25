@@ -1,0 +1,65 @@
+== commits ==
+89da04a feat: add cctoast protocol uri helpers with tests
+
+== diff --stat ==
+ lib/cctoast-lib.ps1 | 16 ++++++++++++++++
+ tests/assert.ps1    | 10 ++++++++++
+ tests/uri.tests.ps1 | 11 +++++++++++
+ 3 files changed, 37 insertions(+)
+
+== diff -U10 ==
+diff --git a/lib/cctoast-lib.ps1 b/lib/cctoast-lib.ps1
+new file mode 100644
+index 0000000..e74c4a3
+--- /dev/null
++++ b/lib/cctoast-lib.ps1
+@@ -0,0 +1,16 @@
++# Pure, side-effect-free helpers shared by the hook, handler, and installer.
++# ASCII-only source (CP949 safety).
++
++function New-ToastLaunchUri {
++    param([string]$Cwd)
++    $enc = [System.Uri]::EscapeDataString([string]$Cwd)
++    return "cctoast://open?path=$enc"
++}
++
++function ConvertFrom-ToastLaunchUri {
++    param([string]$Uri)
++    if ($Uri -match 'path=([^&]+)') {
++        return [System.Uri]::UnescapeDataString($Matches[1])
++    }
++    return $null
++}
+diff --git a/tests/assert.ps1 b/tests/assert.ps1
+new file mode 100644
+index 0000000..ea7182c
+--- /dev/null
++++ b/tests/assert.ps1
+@@ -0,0 +1,10 @@
++function Assert-Equal($actual, $expected, $msg) {
++    if ($actual -ne $expected) {
++        throw "ASSERT FAILED: $msg`n  expected: [$expected]`n  actual:   [$actual]"
++    }
++    Write-Host "  ok: $msg"
++}
++function Assert-True($cond, $msg) {
++    if (-not $cond) { throw "ASSERT FAILED: $msg" }
++    Write-Host "  ok: $msg"
++}
+diff --git a/tests/uri.tests.ps1 b/tests/uri.tests.ps1
+new file mode 100644
+index 0000000..498a6fc
+--- /dev/null
++++ b/tests/uri.tests.ps1
+@@ -0,0 +1,11 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++. "$PSScriptRoot\..\lib\cctoast-lib.ps1"
++
++$cwd = 'C:\Users\taka2\Desktop\final-project\metabolic-twin-fe'
++$uri = New-ToastLaunchUri $cwd
++Assert-True ($uri -like 'cctoast://open?path=*') "uri has scheme/prefix"
++Assert-True ($uri -notmatch '[\\ ]') "uri is percent-encoded (no raw backslash/space)"
++Assert-Equal (ConvertFrom-ToastLaunchUri $uri) $cwd "roundtrip restores cwd exactly"
++Assert-Equal (ConvertFrom-ToastLaunchUri 'cctoast://open') $null "missing path -> null"
++Write-Host "uri.tests PASSED"

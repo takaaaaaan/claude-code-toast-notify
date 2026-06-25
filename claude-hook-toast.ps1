@@ -1,5 +1,7 @@
 param(
-    [string]$Lang = 'en'
+    [string]$Lang = 'en',
+    [string]$AppId = 'Claude.Code.ToastNotify',
+    [string]$Scheme = 'cctoast'
 )
 
 # Claude Code Notification Hook (Windows toast) -- portable version.
@@ -20,6 +22,7 @@ param(
 #   powershell -ExecutionPolicy Bypass -File "<...>/claude-hook-toast.ps1" <lang>
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib\cctoast-lib.ps1')
 
 # --- read hook payload from stdin as UTF-8 ---------------------------------
 $reader = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8)
@@ -103,11 +106,52 @@ $message = ($message -replace '\s+', ' ').Trim()
 if ([string]::IsNullOrEmpty($message)) { $message = Msg 'response_finished' 'Response finished' }
 if ($message.Length -gt $max) { $message = $message.Substring(0, $max).TrimEnd() + ' ...' }
 
-# --- show Windows toast ----------------------------------------------------
-$template = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]::GetTemplateContent(
-    [Windows.UI.Notifications.ToastTemplateType, Windows.UI.Notifications, ContentType = WindowsRuntime]::ToastText02
-)
-$template.SelectSingleNode('//text[@id="1"]').InnerText = $header
-$template.SelectSingleNode('//text[@id="2"]').InnerText = $message
-$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($template)
+# --- ancestor PID chain (lets the VS Code extension focus the exact tab) ----
+function Get-AncestorPids {
+    $ids = @()
+    $cur = $PID
+    for ($i = 0; $i -lt 8 -and $cur; $i++) {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
+        if (-not $p) { break }
+        $ids += $p.ProcessId
+        $cur = $p.ParentProcessId
+    }
+    return ($ids -join ',')
+}
+
+# --- build launch URI + icon URI ------------------------------------------
+$pids = ''
+try { $pids = Get-AncestorPids } catch { $pids = '' }
+$launchUri = if ($cwd) { New-ToastLaunchUri $cwd $Scheme $pids } else { "${Scheme}://open" }
+$iconPath  = Join-Path $PSScriptRoot 'icon.png'
+$iconUri   = 'file:///' + ($iconPath -replace '\\', '/')
+$attribution = if ($workspace) { if ($branch) { "$workspace @ $branch" } else { $workspace } } else { '' }
+
+# --- show Windows toast (ToastGeneric) ------------------------------------
+[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+[void][Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime]
+[void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime]
+
+$base = @'
+<toast activationType="protocol" launch="">
+  <visual>
+    <binding template="ToastGeneric">
+      <image placement="appLogoOverride" hint-crop="circle" src=""/>
+      <text id="1"></text>
+      <text id="2"></text>
+      <text id="3" placement="attribution"></text>
+    </binding>
+  </visual>
+</toast>
+'@
+
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml($base)
+$xml.DocumentElement.SetAttribute('launch', $launchUri)
+$xml.SelectSingleNode('//image').SetAttribute('src', $iconUri)
+$xml.SelectSingleNode('//text[@id="1"]').InnerText = $header
+$xml.SelectSingleNode('//text[@id="2"]').InnerText = $message
+$xml.SelectSingleNode('//text[@id="3"]').InnerText = $attribution
+
+$toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId).Show($toast)
