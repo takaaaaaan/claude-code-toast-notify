@@ -1,0 +1,768 @@
+== commits ==
+4fa41ae docs: document v2 click-to-VS-Code flow; add test suite runner
+e1abe86 feat: uninstaller removes v2 files, registry keys, and hooks
+8651bf7 test: guard install-test cleanup with finally; assert notification hook, fwd-slash, backup
+a35ae2a feat: installer registers AUMID + cctoast protocol and copies v2 files
+a8f6046 test: make handler test self-contained (temp target dir, no machine-specific path)
+945564d feat: cctoast protocol handler focuses VS Code workspace window
+a60e233 feat: render ToastGeneric with icon, attribution, click-to-protocol launch
+26fbbe4 feat: generate bundled toast icon
+5a22234 feat: move idempotent hook merge/remove into lib with tests
+4cc35b7 test: assert cctoast uri prefix with regex, not -like wildcard
+89da04a feat: add cctoast protocol uri helpers with tests
+9cfaf47 docs: fix dead seed line in task 6 test
+
+== diff --stat ==
+ README.md                                          |  64 +++++++++-----
+ cctoast-open.ps1                                   |  26 ++++++
+ claude-hook-toast.ps1                              |  46 ++++++++--
+ .../plans/2026-06-17-toast-v2-vscode.md            |   2 -
+ icon.png                                           | Bin 0 -> 3850 bytes
+ install.ps1                                        |  96 +++++++++------------
+ lib/cctoast-lib.ps1                                |  57 ++++++++++++
+ tests/assert.ps1                                   |  10 +++
+ tests/handler.tests.ps1                            |  23 +++++
+ tests/hooks.tests.ps1                              |  24 ++++++
+ tests/install.tests.ps1                            |  42 +++++++++
+ tests/run-all.ps1                                  |   8 ++
+ tests/uninstall.tests.ps1                          |  26 ++++++
+ tests/uri.tests.ps1                                |  11 +++
+ tools/make-icon.ps1                                |  19 ++++
+ uninstall.ps1                                      |  44 +++-------
+ 16 files changed, 380 insertions(+), 118 deletions(-)
+
+== diff -U10 ==
+diff --git a/README.md b/README.md
+index 91c43e0..a8d4c80 100644
+--- a/README.md
++++ b/README.md
+@@ -1,74 +1,94 @@
+ # Claude Code Toast Notify (Windows)
+ 
+ Windows toast notifications for [Claude Code](https://claude.com/claude-code) hook
+ events. Zero dependencies — uses only built-in Windows + PowerShell.
+ 
+ - **Header**: `Claude Code | <workspace> @ <branch>`
+ - **Body**:
+   - `Stop` event → a snippet of Claude's last response
+   - `Notification` event → Claude's message (waiting for input / permission)
++- **Click the toast** to focus the VS Code window for that workspace
++- Modern **ToastGeneric** card with the "Claude Code" header (custom AUMID `Claude.Code.ToastNotify`) and icon (`icon.png`)
+ - Works whether your hook shell is **git bash, PowerShell, or cmd**.
+ - Labels available in **English / 日本語 / 한국어**.
+ 
+ > Derived from [soulee-dev/claude-code-notify-powershell](https://github.com/soulee-dev/claude-code-notify-powershell).
+-> Adds: workspace + branch in the header, last-response body, cross-shell install, i18n.
++> Adds: workspace + branch in the header, last-response body, cross-shell install, i18n, click-to-focus VS Code, custom AUMID.
++
++---
++
++## How it works (v2)
++
++1. **On Stop/Notification**, the hook builds a `cctoast://open?path=<percent-encoded cwd>` URI and shows a ToastGeneric toast with that URI as the click target. The toast header reads "Claude Code" (via the custom AUMID).
++
++2. **The installer** (HKCU only, no elevation required) registers:
++   - A custom AUMID `Claude.Code.ToastNotify` with `DisplayName = "Claude Code"` and the project `icon.png`, so Windows displays the friendly name and icon in the toast header.
++   - The `cctoast:` custom URI scheme pointing to `cctoast-open.ps1` in `~/.claude/`.
++
++3. **Clicking the toast** runs `cctoast-open.ps1`, which calls `code --reuse-window "<cwd>"` and uses `SetForegroundWindow` to bring the matching VS Code window to the foreground.
++
++   > **Known limitation**: this focuses the VS Code *window*, not a specific integrated-terminal tab. VS Code exposes no public API for selecting a particular terminal instance.
++
++   > **Not implemented**: responding to Claude from an input box in the toast. That would require COM activation of the app and unreliable keystroke injection — deliberately left out.
+ 
+ ---
+ 
+ ## Install
+ 
+ From this folder, in PowerShell:
+ 
+ ```powershell
+ # English (default)
+ .\install.ps1
+ 
+ # 日本語
+ .\install.ps1 -Lang ja
+ 
+ # 한국어
+ .\install.ps1 -Lang ko
+ ```
+ 
++The installer accepts these parameters:
++
++| Parameter    | Default                        | Description                              |
++|--------------|--------------------------------|------------------------------------------|
++| `-Lang`      | `en`                           | Label language (`en` / `ja` / `ko`)      |
++| `-ClaudeDir` | `~/.claude`                    | Destination for installed scripts        |
++| `-AppId`     | `Claude.Code.ToastNotify`      | AUMID registered in HKCU                 |
++| `-Scheme`    | `cctoast`                      | Custom URI scheme registered in HKCU     |
++
+ The installer:
+-1. copies `claude-hook-toast.ps1` + `messages.json` into `~/.claude/`,
+-2. merges `Notification` and `Stop` hooks into `~/.claude/settings.json`
+-   using an **absolute path resolved at install time** (no `%USERPROFILE%` /
+-   `$env:` expansion, so it runs from any shell),
+-3. backs up `settings.json` to `settings.json.bak` and is **idempotent**
+-   (re-running upgrades in place, never duplicates).
++1. Copies `claude-hook-toast.ps1`, `cctoast-open.ps1`, `messages.json`, `icon.png`, and `lib\cctoast-lib.ps1` into `~/.claude/`.
++2. Registers the custom AUMID (`Claude.Code.ToastNotify`, DisplayName "Claude Code") and `cctoast:` protocol in HKCU — **no elevation required**.
++3. Merges `Notification` and `Stop` hooks into `~/.claude/settings.json` using an **absolute path resolved at install time** (no `%USERPROFILE%` / `$env:` expansion, so hooks run from any shell).
++4. Backs up `settings.json` to `settings.json.bak` and is **idempotent** (re-running upgrades in place, never duplicates).
++
++> **Requirement**: the `code` CLI must be on `PATH` for the click-to-focus action to work. On most VS Code installs, run `Shell Command: Install 'code' command in PATH` from the Command Palette once.
+ 
+ Then open `/hooks` in Claude Code once (or restart) to load the hooks.
+ 
+ ## Uninstall
+ 
+ ```powershell
+ .\uninstall.ps1
+ ```
+ 
+-Removes the toast hooks from `settings.json` and deletes the installed files.
+-Other settings are preserved.
++Accepts the same `-ClaudeDir`, `-AppId`, and `-Scheme` parameters as the installer.
++
++Removes the toast hooks from `settings.json`, deletes the installed files (`claude-hook-toast.ps1`, `cctoast-open.ps1`, `messages.json`, `icon.png`, `lib\cctoast-lib.ps1`), and removes the AUMID and `cctoast:` protocol registry keys from HKCU. Other settings are preserved.
+ 
+ ## Customize
+ 
+ - **Body length**: change `$max` in `claude-hook-toast.ps1`.
+-- **Labels**: edit `messages.json` (UTF-8). Add a new top-level language key and
+-  pass it via `-Lang`.
+-- **Events**: by default `Notification` (input/permission prompt) and `Stop`
+-  (response finished). Edit the hooks in `settings.json` to add/remove events
+-  such as `SessionStart` / `SessionEnd`.
++- **Labels**: edit `messages.json` (UTF-8). Add a new top-level language key and pass it via `-Lang`.
++- **Events**: by default `Notification` (input/permission prompt) and `Stop` (response finished). Edit the hooks in `settings.json` to add/remove events such as `SessionStart` / `SessionEnd`.
+ 
+ ## Notes / gotchas
+ 
+-- **Keep `claude-hook-toast.ps1` ASCII-only.** Windows PowerShell 5.1 reads a
+-  BOM-less `.ps1` in the system ANSI code page (e.g. CP949 on Korean Windows),
+-  which corrupts non-ASCII literals. All human-language text lives in
+-  `messages.json` / the hook payload and is read explicitly as UTF-8, so it is
+-  safe regardless of the script's own encoding.
+-- The tiny `{1AC14E77-...}` line at the top of the toast is the app identity
+-  (AUMID) of PowerShell. To show a friendlier name you can register a custom
+-  AUMID with a `DisplayName` in the registry — optional, not required.
++- **Keep `claude-hook-toast.ps1` and `cctoast-open.ps1` ASCII-only.** Windows PowerShell 5.1 reads a BOM-less `.ps1` in the system ANSI code page (e.g. CP949 on Korean Windows), which corrupts non-ASCII literals. All human-language text lives in `messages.json` / the hook payload and is read explicitly as UTF-8, so it is safe regardless of the script's own encoding.
++- The AUMID and `cctoast:` protocol are registered in **HKCU only** — no admin rights needed, and uninstall fully cleans them up.
++- The `icon.png` shipped in this repo is used as the toast icon. Replace it with your own 256×256 PNG if desired; re-run `install.ps1` to update the installed copy.
+ 
+ ## License
+ 
+ MIT — see [LICENSE](LICENSE).
+diff --git a/cctoast-open.ps1 b/cctoast-open.ps1
+new file mode 100644
+index 0000000..45a974a
+--- /dev/null
++++ b/cctoast-open.ps1
+@@ -0,0 +1,26 @@
++param([string]$Uri)
++# Protocol handler for cctoast://open?path=<encoded cwd>.
++# Focuses/opens the VS Code window for that workspace. Never throws visibly.
++$ErrorActionPreference = 'SilentlyContinue'
++. (Join-Path $PSScriptRoot 'lib\cctoast-lib.ps1')
++
++$cwd = ConvertFrom-ToastLaunchUri $Uri
++if ([string]::IsNullOrWhiteSpace($cwd) -or -not (Test-Path -LiteralPath $cwd)) { exit 0 }
++
++# 1) open/reuse the VS Code window for this folder
++& code --reuse-window "$cwd" 2>$null
++
++# 2) best-effort: bring a matching VS Code window to the foreground
++try {
++    $leaf = Split-Path -Leaf $cwd
++    Add-Type -Namespace Native -Name Win -MemberDefinition @'
++[System.Runtime.InteropServices.DllImport("user32.dll")]
++public static extern bool SetForegroundWindow(System.IntPtr hWnd);
++'@
++    Start-Sleep -Milliseconds 400
++    $p = Get-Process -Name 'Code' -ErrorAction SilentlyContinue |
++        Where-Object { $_.MainWindowTitle -match [regex]::Escape($leaf) -and $_.MainWindowTitle -match 'Visual Studio Code' } |
++        Select-Object -First 1
++    if ($p) { [Native.Win]::SetForegroundWindow($p.MainWindowHandle) | Out-Null }
++} catch { }
++exit 0
+diff --git a/claude-hook-toast.ps1 b/claude-hook-toast.ps1
+index afc8d0b..cd5ca73 100644
+--- a/claude-hook-toast.ps1
++++ b/claude-hook-toast.ps1
+@@ -1,32 +1,34 @@
+ param(
+-    [string]$Lang = 'en'
++    [string]$Lang = 'en',
++    [string]$AppId = 'Claude.Code.ToastNotify'
+ )
+ 
+ # Claude Code Notification Hook (Windows toast) -- portable version.
+ #
+ # Shows a Windows toast when Claude Code fires Notification / Stop events.
+ #   - Header : "Claude Code | <workspace> @ <branch>"
+ #   - Body   : last assistant message (Stop) or the event message (Notification)
+ #
+ # Localized fixed labels (en / ja / ko) are loaded at runtime from
+ # messages.json placed next to this script, read as UTF-8.
+ #
+ # IMPORTANT: keep THIS script source ASCII-only. Windows PowerShell 5.1 reads
+ # a BOM-less .ps1 in the system ANSI code page (e.g. CP949), which corrupts any
+ # non-ASCII literal. All human-language text lives in messages.json / stdin and
+ # is read explicitly as UTF-8, so it is unaffected by the .ps1 encoding.
+ #
+ # Invoked identically from git bash, PowerShell, or cmd:
+ #   powershell -ExecutionPolicy Bypass -File "<...>/claude-hook-toast.ps1" <lang>
+ 
+ $ErrorActionPreference = 'Stop'
++. (Join-Path $PSScriptRoot 'lib\cctoast-lib.ps1')
+ 
+ # --- read hook payload from stdin as UTF-8 ---------------------------------
+ $reader = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8)
+ $raw = $reader.ReadToEnd()
+ $json = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+ $hookEvent = $json.hook_event_name
+ $cwd = $json.cwd
+ 
+ # --- load localized labels (UTF-8) -----------------------------------------
+ $L = $null
+@@ -96,18 +98,44 @@ $message = switch ($hookEvent) {
+     'Notification' { $json.message }
+     default        { "$hookEvent : $($json.message)" }
+ }
+ 
+ # collapse whitespace + truncate so the body stays compact
+ $max = 250
+ $message = ($message -replace '\s+', ' ').Trim()
+ if ([string]::IsNullOrEmpty($message)) { $message = Msg 'response_finished' 'Response finished' }
+ if ($message.Length -gt $max) { $message = $message.Substring(0, $max).TrimEnd() + ' ...' }
+ 
+-# --- show Windows toast ----------------------------------------------------
+-$template = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]::GetTemplateContent(
+-    [Windows.UI.Notifications.ToastTemplateType, Windows.UI.Notifications, ContentType = WindowsRuntime]::ToastText02
+-)
+-$template.SelectSingleNode('//text[@id="1"]').InnerText = $header
+-$template.SelectSingleNode('//text[@id="2"]').InnerText = $message
+-$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($template)
++# --- build launch URI + icon URI ------------------------------------------
++$launchUri = if ($cwd) { New-ToastLaunchUri $cwd } else { 'cctoast://open' }
++$iconPath  = Join-Path $PSScriptRoot 'icon.png'
++$iconUri   = 'file:///' + ($iconPath -replace '\\', '/')
++$attribution = if ($workspace) { if ($branch) { "$workspace @ $branch" } else { $workspace } } else { '' }
++
++# --- show Windows toast (ToastGeneric) ------------------------------------
++[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
++[void][Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime]
++[void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime]
++
++$base = @'
++<toast activationType="protocol" launch="">
++  <visual>
++    <binding template="ToastGeneric">
++      <image placement="appLogoOverride" hint-crop="circle" src=""/>
++      <text id="1"></text>
++      <text id="2"></text>
++      <text id="3" placement="attribution"></text>
++    </binding>
++  </visual>
++</toast>
++'@
++
++$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
++$xml.LoadXml($base)
++$xml.DocumentElement.SetAttribute('launch', $launchUri)
++$xml.SelectSingleNode('//image').SetAttribute('src', $iconUri)
++$xml.SelectSingleNode('//text[@id="1"]').InnerText = $header
++$xml.SelectSingleNode('//text[@id="2"]').InnerText = $message
++$xml.SelectSingleNode('//text[@id="3"]').InnerText = $attribution
++
++$toast = New-Object Windows.UI.Notifications.ToastNotification $xml
++[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId).Show($toast)
+diff --git a/docs/superpowers/plans/2026-06-17-toast-v2-vscode.md b/docs/superpowers/plans/2026-06-17-toast-v2-vscode.md
+index f4fb2cc..a040c9e 100644
+--- a/docs/superpowers/plans/2026-06-17-toast-v2-vscode.md
++++ b/docs/superpowers/plans/2026-06-17-toast-v2-vscode.md
+@@ -540,22 +540,20 @@ Write-Host "Open /hooks in Claude Code once, or restart, to load the new hooks."
+ 
+ Create `tests/install.tests.ps1`:
+ 
+ ```powershell
+ $ErrorActionPreference = 'Stop'
+ . "$PSScriptRoot\assert.ps1"
+ $repo = Split-Path -Parent $PSScriptRoot
+ $tmp = Join-Path $env:TEMP ('cctoast-install-' + [guid]::NewGuid().ToString('N'))
+ $appId = 'Claude.Code.ToastNotify.Test'
+ $scheme = 'cctoasttest'
+-'{ "theme":"dark", "hooks": { "Stop": [ { "hooks":[ {"type":"command","command":"echo other"} ] } ] } }' |
+-    Set-Content (Join-Path ($tmp + '_seed') 'x') -Encoding ascii -ErrorAction SilentlyContinue
+ New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+ '{ "theme":"dark", "hooks": { "Stop": [ { "hooks":[ {"type":"command","command":"echo other"} ] } ] } }' |
+     Set-Content (Join-Path $tmp 'settings.json') -Encoding utf8
+ 
+ & "$repo\install.ps1" -Lang ja -ClaudeDir $tmp -AppId $appId -Scheme $scheme | Out-Null
+ & "$repo\install.ps1" -Lang ko -ClaudeDir $tmp -AppId $appId -Scheme $scheme | Out-Null  # idempotency
+ 
+ Assert-True (Test-Path (Join-Path $tmp 'claude-hook-toast.ps1')) "hook script copied"
+ Assert-True (Test-Path (Join-Path $tmp 'cctoast-open.ps1')) "handler copied"
+ Assert-True (Test-Path (Join-Path $tmp 'lib\cctoast-lib.ps1')) "lib copied"
+diff --git a/install.ps1 b/install.ps1
+index 33aa653..4a1f2cb 100644
+--- a/install.ps1
++++ b/install.ps1
+@@ -1,73 +1,59 @@
+ param(
+     [ValidateSet('en', 'ja', 'ko')]
+     [string]$Lang = 'en',
+-    [string]$ClaudeDir = (Join-Path $env:USERPROFILE '.claude')
++    [string]$ClaudeDir = (Join-Path $env:USERPROFILE '.claude'),
++    [string]$AppId = 'Claude.Code.ToastNotify',
++    [string]$Scheme = 'cctoast'
+ )
+-
+-# Installer for the Claude Code toast notification hook.
+-# - Copies claude-hook-toast.ps1 + messages.json into <ClaudeDir>
+-# - Merges Notification/Stop hooks into <ClaudeDir>/settings.json
+-#   using an absolute, forward-slash path resolved at install time, so the
+-#   hook command works from git bash, PowerShell, or cmd with no variable
+-#   expansion. Existing settings are preserved; re-running is idempotent.
+-
+ $ErrorActionPreference = 'Stop'
+ $srcDir = $PSScriptRoot
++. (Join-Path $srcDir 'lib\cctoast-lib.ps1')
++
++# 1) copy files (preserve lib/ subdir)
++if (-not (Test-Path -LiteralPath $ClaudeDir)) { New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null }
++if (-not (Test-Path -LiteralPath (Join-Path $ClaudeDir 'lib'))) { New-Item -ItemType Directory -Path (Join-Path $ClaudeDir 'lib') -Force | Out-Null }
++Copy-Item (Join-Path $srcDir 'claude-hook-toast.ps1') $ClaudeDir -Force
++Copy-Item (Join-Path $srcDir 'cctoast-open.ps1')      $ClaudeDir -Force
++Copy-Item (Join-Path $srcDir 'messages.json')         $ClaudeDir -Force
++Copy-Item (Join-Path $srcDir 'icon.png')              $ClaudeDir -Force
++Copy-Item (Join-Path $srcDir 'lib\cctoast-lib.ps1')   (Join-Path $ClaudeDir 'lib') -Force
++
++# 2) register custom AUMID (toast header shows "Claude Code" + icon)
++$aumidKey = "HKCU:\Software\Classes\AppUserModelId\$AppId"
++New-Item -Path $aumidKey -Force | Out-Null
++Set-ItemProperty -Path $aumidKey -Name 'DisplayName' -Value 'Claude Code'
++Set-ItemProperty -Path $aumidKey -Name 'IconUri' -Value (Join-Path $ClaudeDir 'icon.png')
++
++# 3) register the cctoast: protocol -> handler
++$handler = (Join-Path $ClaudeDir 'cctoast-open.ps1')
++$schemeKey = "HKCU:\Software\Classes\$Scheme"
++New-Item -Path $schemeKey -Force | Out-Null
++Set-ItemProperty -Path $schemeKey -Name '(default)' -Value "URL:$Scheme protocol"
++Set-ItemProperty -Path $schemeKey -Name 'URL Protocol' -Value ''
++$cmdKey = "$schemeKey\shell\open\command"
++New-Item -Path $cmdKey -Force | Out-Null
++Set-ItemProperty -Path $cmdKey -Name '(default)' -Value "powershell -ExecutionPolicy Bypass -File `"$handler`" `"%1`""
++
++# 4) merge hooks with an install-time absolute, forward-slash path
++$ps1Path = (Join-Path $ClaudeDir 'claude-hook-toast.ps1') -replace '\\', '/'
++$command = "powershell -ExecutionPolicy Bypass -File `"$ps1Path`" $Lang"
+ 
+-# 1) copy files
+-if (-not (Test-Path -LiteralPath $ClaudeDir)) {
+-    New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null
+-}
+-Copy-Item -LiteralPath (Join-Path $srcDir 'claude-hook-toast.ps1') -Destination $ClaudeDir -Force
+-Copy-Item -LiteralPath (Join-Path $srcDir 'messages.json')         -Destination $ClaudeDir -Force
+-
+-# 2) build the hook command with a resolved absolute path (forward slashes)
+-$ps1Path  = (Join-Path $ClaudeDir 'claude-hook-toast.ps1') -replace '\\', '/'
+-$command  = "powershell -ExecutionPolicy Bypass -File `"$ps1Path`" $Lang"
+-
+-# 3) load (or create) settings.json
+ $settingsPath = Join-Path $ClaudeDir 'settings.json'
+ if (Test-Path -LiteralPath $settingsPath) {
+     $sr = New-Object System.IO.StreamReader($settingsPath, [System.Text.Encoding]::UTF8)
+     $text = $sr.ReadToEnd(); $sr.Close()
+-    if ([string]::IsNullOrWhiteSpace($text)) { $settings = [PSCustomObject]@{} }
+-    else { $settings = $text | ConvertFrom-Json }
+-    # backup before modifying
++    $settings = if ([string]::IsNullOrWhiteSpace($text)) { [PSCustomObject]@{} } else { $text | ConvertFrom-Json }
+     Copy-Item -LiteralPath $settingsPath -Destination "$settingsPath.bak" -Force
+-} else {
+-    $settings = [PSCustomObject]@{}
+-}
+-
+-# 4) merge a hook for one event, removing any prior entry that references our
+-#    script (handles upgrades / re-runs without duplicating notifications)
+-function Set-Hook($settings, $eventName, $command) {
+-    if (-not $settings.PSObject.Properties['hooks']) {
+-        $settings | Add-Member -NotePropertyName 'hooks' -NotePropertyValue ([PSCustomObject]@{})
+-    }
+-    $hooks = $settings.hooks
+-    $kept = @()
+-    if ($hooks.PSObject.Properties[$eventName]) {
+-        foreach ($group in @($hooks.$eventName)) {
+-            $refsOurs = $false
+-            foreach ($h in @($group.hooks)) {
+-                if ($h.command -and $h.command -match 'claude-hook-toast\.ps1') { $refsOurs = $true }
+-            }
+-            if (-not $refsOurs) { $kept += $group }
+-        }
+-    }
+-    $kept += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $command }) }
+-    if ($hooks.PSObject.Properties[$eventName]) { $hooks.$eventName = @($kept) }
+-    else { $hooks | Add-Member -NotePropertyName $eventName -NotePropertyValue @($kept) }
+-}
++} else { $settings = [PSCustomObject]@{} }
+ 
+-Set-Hook $settings 'Notification' $command
+-Set-Hook $settings 'Stop'         $command
++Set-ToastHook $settings 'Notification' $command
++Set-ToastHook $settings 'Stop'         $command
+ 
+-# 5) write settings.json back as UTF-8 (no BOM)
+ $out = $settings | ConvertTo-Json -Depth 20
+ [System.IO.File]::WriteAllText($settingsPath, $out, (New-Object System.Text.UTF8Encoding($false)))
+ 
+-Write-Host "Installed toast hook (lang=$Lang)."
+-Write-Host "  script   : $ps1Path"
+-Write-Host "  settings : $settingsPath"
++Write-Host "Installed toast hook v2 (lang=$Lang)."
++Write-Host "  scripts  : $ClaudeDir"
++Write-Host "  AUMID    : $AppId"
++Write-Host "  protocol : ${Scheme}://"
+ Write-Host "Open /hooks in Claude Code once, or restart, to load the new hooks."
+diff --git a/lib/cctoast-lib.ps1 b/lib/cctoast-lib.ps1
+new file mode 100644
+index 0000000..88e730a
+--- /dev/null
++++ b/lib/cctoast-lib.ps1
+@@ -0,0 +1,57 @@
++# Pure, side-effect-free helpers shared by the hook, handler, and installer.
++# ASCII-only source (CP949 safety).
++
++function New-ToastLaunchUri {
++    param([string]$Cwd)
++    $enc = [System.Uri]::EscapeDataString([string]$Cwd)
++    return "cctoast://open?path=$enc"
++}
++
++function ConvertFrom-ToastLaunchUri {
++    param([string]$Uri)
++    if ($Uri -match 'path=([^&]+)') {
++        return [System.Uri]::UnescapeDataString($Matches[1])
++    }
++    return $null
++}
++
++function Set-ToastHook {
++    param($Settings, [string]$EventName, [string]$Command)
++    if (-not $Settings.PSObject.Properties['hooks']) {
++        $Settings | Add-Member -NotePropertyName 'hooks' -NotePropertyValue ([PSCustomObject]@{})
++    }
++    $hooks = $Settings.hooks
++    $kept = @()
++    if ($hooks.PSObject.Properties[$EventName]) {
++        foreach ($group in @($hooks.$EventName)) {
++            $refsOurs = $false
++            foreach ($h in @($group.hooks)) {
++                if ($h.command -and $h.command -match 'claude-hook-toast\.ps1') { $refsOurs = $true }
++            }
++            if (-not $refsOurs) { $kept += $group }
++        }
++    }
++    $kept += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $Command }) }
++    if ($hooks.PSObject.Properties[$EventName]) { $hooks.$EventName = @($kept) }
++    else { $hooks | Add-Member -NotePropertyName $EventName -NotePropertyValue @($kept) }
++}
++
++function Remove-ToastHook {
++    param($Settings, [string]$EventName)
++    if (-not $Settings.PSObject.Properties['hooks']) { return }
++    $hooks = $Settings.hooks
++    if (-not $hooks.PSObject.Properties[$EventName]) { return }
++    $kept = @()
++    foreach ($group in @($hooks.$EventName)) {
++        $refsOurs = $false
++        foreach ($h in @($group.hooks)) {
++            if ($h.command -and $h.command -match 'claude-hook-toast\.ps1') { $refsOurs = $true }
++        }
++        if (-not $refsOurs) { $kept += $group }
++    }
++    if ($kept.Count -gt 0) { $hooks.$EventName = @($kept) }
++    else { $hooks.PSObject.Properties.Remove($EventName) }
++    if (@($hooks.PSObject.Properties).Count -eq 0) {
++        $Settings.PSObject.Properties.Remove('hooks')
++    }
++}
+diff --git a/tests/assert.ps1 b/tests/assert.ps1
+new file mode 100644
+index 0000000..ea7182c
+--- /dev/null
++++ b/tests/assert.ps1
+@@ -0,0 +1,10 @@
++function Assert-Equal($actual, $expected, $msg) {
++    if ($actual -ne $expected) {
++        throw "ASSERT FAILED: $msg`n  expected: [$expected]`n  actual:   [$actual]"
++    }
++    Write-Host "  ok: $msg"
++}
++function Assert-True($cond, $msg) {
++    if (-not $cond) { throw "ASSERT FAILED: $msg" }
++    Write-Host "  ok: $msg"
++}
+diff --git a/tests/handler.tests.ps1 b/tests/handler.tests.ps1
+new file mode 100644
+index 0000000..4f51d2a
+--- /dev/null
++++ b/tests/handler.tests.ps1
+@@ -0,0 +1,23 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++
++$work = Join-Path $env:TEMP ('cctoast-handler-' + [guid]::NewGuid().ToString('N'))
++New-Item -ItemType Directory -Path $work | Out-Null
++$log = Join-Path $work 'code-args.txt'
++# fake `code` that records its args
++"@echo off`r`n>>`"$log`" echo %*" | Set-Content (Join-Path $work 'code.cmd') -Encoding ascii
++
++$target = Join-Path $work 'demo-workspace'
++New-Item -ItemType Directory -Path $target | Out-Null
++. "$PSScriptRoot\..\lib\cctoast-lib.ps1"
++$uri = New-ToastLaunchUri $target
++
++$env:PATH = "$work;$env:PATH"
++powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\..\cctoast-open.ps1" $uri | Out-Null
++
++Assert-True (Test-Path $log) "fake code was invoked"
++$line = Get-Content $log -Raw
++Assert-True ($line -match '--reuse-window') "code called with --reuse-window"
++Assert-True ($line -match 'demo-workspace') "code called with the target path"
++Remove-Item $work -Recurse -Force
++Write-Host "handler.tests PASSED"
+diff --git a/tests/hooks.tests.ps1 b/tests/hooks.tests.ps1
+new file mode 100644
+index 0000000..a36639b
+--- /dev/null
++++ b/tests/hooks.tests.ps1
+@@ -0,0 +1,24 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++. "$PSScriptRoot\..\lib\cctoast-lib.ps1"
++
++# starts with an unrelated hook that must be preserved
++$json = '{ "hooks": { "Stop": [ { "hooks": [ { "type":"command","command":"echo other" } ] } ] } }'
++$s = $json | ConvertFrom-Json
++
++Set-ToastHook $s 'Stop' 'powershell -File "C:/x/claude-hook-toast.ps1" ja'
++Set-ToastHook $s 'Stop' 'powershell -File "C:/x/claude-hook-toast.ps1" ko'  # re-run -> replace
++Set-ToastHook $s 'Notification' 'powershell -File "C:/x/claude-hook-toast.ps1" ko'
++
++$stop = @($s.hooks.Stop)
++Assert-Equal $stop.Count 2 "Stop keeps unrelated hook + exactly one of ours"
++$ours = @($stop | Where-Object { $_.hooks[0].command -match 'claude-hook-toast' })
++Assert-Equal $ours.Count 1 "exactly one of our Stop hooks (idempotent)"
++Assert-True ($ours[0].hooks[0].command -match ' ko$') "latest command wins (ko)"
++
++Remove-ToastHook $s 'Stop'
++Remove-ToastHook $s 'Notification'
++$stop2 = @($s.hooks.Stop)
++Assert-Equal $stop2.Count 1 "Stop retains only the unrelated hook after removal"
++Assert-True (-not $s.hooks.PSObject.Properties['Notification']) "empty Notification event removed"
++Write-Host "hooks.tests PASSED"
+diff --git a/tests/install.tests.ps1 b/tests/install.tests.ps1
+new file mode 100644
+index 0000000..812f19f
+--- /dev/null
++++ b/tests/install.tests.ps1
+@@ -0,0 +1,42 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++$repo = Split-Path -Parent $PSScriptRoot
++$tmp = Join-Path $env:TEMP ('cctoast-install-' + [guid]::NewGuid().ToString('N'))
++$appId = 'Claude.Code.ToastNotify.Test'
++$scheme = 'cctoasttest'
++New-Item -ItemType Directory -Path $tmp -Force | Out-Null
++'{ "theme":"dark", "hooks": { "Stop": [ { "hooks":[ {"type":"command","command":"echo other"} ] } ] } }' |
++    Set-Content (Join-Path $tmp 'settings.json') -Encoding utf8
++
++& "$repo\install.ps1" -Lang ja -ClaudeDir $tmp -AppId $appId -Scheme $scheme | Out-Null
++& "$repo\install.ps1" -Lang ko -ClaudeDir $tmp -AppId $appId -Scheme $scheme | Out-Null  # idempotency
++
++try {
++    Assert-True (Test-Path (Join-Path $tmp 'claude-hook-toast.ps1')) "hook script copied"
++    Assert-True (Test-Path (Join-Path $tmp 'cctoast-open.ps1')) "handler copied"
++    Assert-True (Test-Path (Join-Path $tmp 'lib\cctoast-lib.ps1')) "lib copied"
++    Assert-True (Test-Path (Join-Path $tmp 'icon.png')) "icon copied"
++    Assert-True (Test-Path "HKCU:\Software\Classes\AppUserModelId\$appId") "AUMID registered"
++    Assert-True (Test-Path "HKCU:\Software\Classes\$scheme\shell\open\command") "protocol registered"
++
++    $s = Get-Content (Join-Path $tmp 'settings.json') -Raw | ConvertFrom-Json
++    Assert-Equal $s.theme 'dark' "unrelated setting preserved"
++    $stop = @($s.hooks.Stop | Where-Object { $_.hooks[0].command -match 'claude-hook-toast' })
++    Assert-Equal $stop.Count 1 "exactly one of our Stop hooks (idempotent across re-run)"
++    Assert-True ($stop[0].hooks[0].command -match ' ko$') "latest lang wins"
++
++    $notif = @($s.hooks.Notification | Where-Object { $_.hooks[0].command -match 'claude-hook-toast' })
++    Assert-Equal $notif.Count 1 "Notification hook merged"
++
++    Assert-True ($stop[0].hooks[0].command -match '/claude-hook-toast\.ps1') "hook path uses forward slashes"
++
++    Assert-True (Test-Path (Join-Path $tmp 'settings.json.bak')) "settings.json backup created"
++
++    Write-Host "install.tests PASSED"
++}
++finally {
++    # cleanup
++    Remove-Item "HKCU:\Software\Classes\AppUserModelId\$appId" -Recurse -Force -ErrorAction SilentlyContinue
++    Remove-Item "HKCU:\Software\Classes\$scheme" -Recurse -Force -ErrorAction SilentlyContinue
++    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
++}
+diff --git a/tests/run-all.ps1 b/tests/run-all.ps1
+new file mode 100644
+index 0000000..e0b6442
+--- /dev/null
++++ b/tests/run-all.ps1
+@@ -0,0 +1,8 @@
++$ErrorActionPreference = 'Stop'
++$fail = 0
++Get-ChildItem "$PSScriptRoot\*.tests.ps1" | ForEach-Object {
++    Write-Host "== $($_.Name) =="
++    try { & powershell -NoProfile -ExecutionPolicy Bypass -File $_.FullName; if ($LASTEXITCODE) { $fail++ } }
++    catch { Write-Host $_; $fail++ }
++}
++if ($fail) { Write-Host "FAILED: $fail suite(s)"; exit 1 } else { Write-Host "ALL SUITES PASSED" }
+diff --git a/tests/uninstall.tests.ps1 b/tests/uninstall.tests.ps1
+new file mode 100644
+index 0000000..711a80a
+--- /dev/null
++++ b/tests/uninstall.tests.ps1
+@@ -0,0 +1,26 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++$repo = Split-Path -Parent $PSScriptRoot
++$tmp = Join-Path $env:TEMP ('cctoast-uninstall-' + [guid]::NewGuid().ToString('N'))
++$appId = 'Claude.Code.ToastNotify.Test'
++$scheme = 'cctoasttest'
++New-Item -ItemType Directory -Path $tmp -Force | Out-Null
++'{ "theme":"dark" }' | Set-Content (Join-Path $tmp 'settings.json') -Encoding utf8
++
++try {
++    & "$repo\install.ps1" -Lang en -ClaudeDir $tmp -AppId $appId -Scheme $scheme | Out-Null
++    & "$repo\uninstall.ps1" -ClaudeDir $tmp -AppId $appId -Scheme $scheme | Out-Null
++
++    Assert-True (-not (Test-Path (Join-Path $tmp 'claude-hook-toast.ps1'))) "hook script removed"
++    Assert-True (-not (Test-Path (Join-Path $tmp 'cctoast-open.ps1'))) "handler removed"
++    Assert-True (-not (Test-Path "HKCU:\Software\Classes\AppUserModelId\$appId")) "AUMID removed"
++    Assert-True (-not (Test-Path "HKCU:\Software\Classes\$scheme")) "protocol removed"
++    $s = Get-Content (Join-Path $tmp 'settings.json') -Raw | ConvertFrom-Json
++    Assert-Equal $s.theme 'dark' "unrelated setting preserved"
++    Assert-True (-not $s.PSObject.Properties['hooks']) "our hooks fully removed"
++    Write-Host "uninstall.tests PASSED"
++} finally {
++    Remove-Item "HKCU:\Software\Classes\AppUserModelId\$appId" -Recurse -Force -ErrorAction SilentlyContinue
++    Remove-Item "HKCU:\Software\Classes\$scheme" -Recurse -Force -ErrorAction SilentlyContinue
++    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
++}
+diff --git a/tests/uri.tests.ps1 b/tests/uri.tests.ps1
+new file mode 100644
+index 0000000..a141229
+--- /dev/null
++++ b/tests/uri.tests.ps1
+@@ -0,0 +1,11 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++. "$PSScriptRoot\..\lib\cctoast-lib.ps1"
++
++$cwd = 'C:\Users\taka2\Desktop\final-project\metabolic-twin-fe'
++$uri = New-ToastLaunchUri $cwd
++Assert-True ($uri -match '^cctoast://open\?path=') "uri has scheme/prefix"
++Assert-True ($uri -notmatch '[\\ ]') "uri is percent-encoded (no raw backslash/space)"
++Assert-Equal (ConvertFrom-ToastLaunchUri $uri) $cwd "roundtrip restores cwd exactly"
++Assert-Equal (ConvertFrom-ToastLaunchUri 'cctoast://open') $null "missing path -> null"
++Write-Host "uri.tests PASSED"
+diff --git a/tools/make-icon.ps1 b/tools/make-icon.ps1
+new file mode 100644
+index 0000000..0573041
+--- /dev/null
++++ b/tools/make-icon.ps1
+@@ -0,0 +1,19 @@
++param([string]$Out = (Join-Path $PSScriptRoot '..\icon.png'))
++Add-Type -AssemblyName System.Drawing
++$size = 256
++$bmp = New-Object System.Drawing.Bitmap $size, $size
++$g = [System.Drawing.Graphics]::FromImage($bmp)
++$g.SmoothingMode = 'AntiAlias'
++$g.Clear([System.Drawing.Color]::Transparent)
++$bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 209, 102, 76))
++$g.FillEllipse($bg, 8, 8, $size-16, $size-16)
++$font = New-Object System.Drawing.Font 'Segoe UI', 150, ([System.Drawing.FontStyle]::Bold)
++$fg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
++$fmt = New-Object System.Drawing.StringFormat
++$fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
++$g.DrawString('C', $font, $fg, (New-Object System.Drawing.RectangleF 0,0,$size,$size), $fmt)
++$g.Dispose()
++$full = [System.IO.Path]::GetFullPath($Out)
++$bmp.Save($full, [System.Drawing.Imaging.ImageFormat]::Png)
++$bmp.Dispose()
++Write-Host "wrote $full"
+diff --git a/uninstall.ps1 b/uninstall.ps1
+index 85e5fb1..06cff3e 100644
+--- a/uninstall.ps1
++++ b/uninstall.ps1
+@@ -1,49 +1,33 @@
+ param(
+-    [string]$ClaudeDir = (Join-Path $env:USERPROFILE '.claude')
++    [string]$ClaudeDir = (Join-Path $env:USERPROFILE '.claude'),
++    [string]$AppId = 'Claude.Code.ToastNotify',
++    [string]$Scheme = 'cctoast'
+ )
+-
+-# Uninstaller: removes the toast hooks from settings.json and deletes the
+-# installed script + messages.json. Other settings are preserved.
+-
+ $ErrorActionPreference = 'Stop'
+-$settingsPath = Join-Path $ClaudeDir 'settings.json'
++. (Join-Path $PSScriptRoot 'lib\cctoast-lib.ps1')
+ 
++$settingsPath = Join-Path $ClaudeDir 'settings.json'
+ if (Test-Path -LiteralPath $settingsPath) {
+     $sr = New-Object System.IO.StreamReader($settingsPath, [System.Text.Encoding]::UTF8)
+     $text = $sr.ReadToEnd(); $sr.Close()
+     if (-not [string]::IsNullOrWhiteSpace($text)) {
+         $settings = $text | ConvertFrom-Json
+         Copy-Item -LiteralPath $settingsPath -Destination "$settingsPath.bak" -Force
+-
+-        if ($settings.PSObject.Properties['hooks']) {
+-            $hooks = $settings.hooks
+-            foreach ($eventName in @('Notification', 'Stop')) {
+-                if (-not $hooks.PSObject.Properties[$eventName]) { continue }
+-                $kept = @()
+-                foreach ($group in @($hooks.$eventName)) {
+-                    $refsOurs = $false
+-                    foreach ($h in @($group.hooks)) {
+-                        if ($h.command -and $h.command -match 'claude-hook-toast\.ps1') { $refsOurs = $true }
+-                    }
+-                    if (-not $refsOurs) { $kept += $group }
+-                }
+-                if ($kept.Count -gt 0) { $hooks.$eventName = @($kept) }
+-                else { $hooks.PSObject.Properties.Remove($eventName) }
+-            }
+-            # drop the hooks object entirely if it is now empty
+-            if (@($hooks.PSObject.Properties).Count -eq 0) {
+-                $settings.PSObject.Properties.Remove('hooks')
+-            }
+-        }
+-
++        Remove-ToastHook $settings 'Notification'
++        Remove-ToastHook $settings 'Stop'
+         $out = $settings | ConvertTo-Json -Depth 20
+         [System.IO.File]::WriteAllText($settingsPath, $out, (New-Object System.Text.UTF8Encoding($false)))
+     }
+ }
+ 
+-foreach ($f in @('claude-hook-toast.ps1', 'messages.json')) {
++foreach ($f in @('claude-hook-toast.ps1', 'cctoast-open.ps1', 'messages.json', 'icon.png', 'lib\cctoast-lib.ps1')) {
+     $p = Join-Path $ClaudeDir $f
+     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+ }
++$libDir = Join-Path $ClaudeDir 'lib'
++if ((Test-Path $libDir) -and -not (Get-ChildItem $libDir -Force)) { Remove-Item $libDir -Force }
+ 
+-Write-Host "Uninstalled toast hook from $ClaudeDir."
++foreach ($key in @("HKCU:\Software\Classes\AppUserModelId\$AppId", "HKCU:\Software\Classes\$Scheme")) {
++    if (Test-Path $key) { Remove-Item $key -Recurse -Force }
++}
++Write-Host "Uninstalled toast hook v2 from $ClaudeDir."

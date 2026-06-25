@@ -2,14 +2,24 @@
 # ASCII-only source (CP949 safety).
 
 function New-ToastLaunchUri {
-    param([string]$Cwd, [string]$Scheme = 'cctoast')
+    param([string]$Cwd, [string]$Scheme = 'cctoast', [string]$Pids = '')
     $enc = [System.Uri]::EscapeDataString([string]$Cwd)
-    return "${Scheme}://open?path=$enc"
+    $uri = "${Scheme}://open?path=$enc"
+    if ($Pids) { $uri += '&pids=' + [System.Uri]::EscapeDataString([string]$Pids) }
+    return $uri
 }
 
 function ConvertFrom-ToastLaunchUri {
     param([string]$Uri)
     if ($Uri -match 'path=([^&]+)') {
+        return [System.Uri]::UnescapeDataString($Matches[1])
+    }
+    return $null
+}
+
+function Get-ToastLaunchPids {
+    param([string]$Uri)
+    if ($Uri -match 'pids=([^&]+)') {
         return [System.Uri]::UnescapeDataString($Matches[1])
     }
     return $null

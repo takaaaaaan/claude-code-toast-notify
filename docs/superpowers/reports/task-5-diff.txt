@@ -1,0 +1,64 @@
+== commits ==
+945564d feat: cctoast protocol handler focuses VS Code workspace window
+
+== diff -U12 ==
+diff --git a/cctoast-open.ps1 b/cctoast-open.ps1
+new file mode 100644
+index 0000000..45a974a
+--- /dev/null
++++ b/cctoast-open.ps1
+@@ -0,0 +1,26 @@
++param([string]$Uri)
++# Protocol handler for cctoast://open?path=<encoded cwd>.
++# Focuses/opens the VS Code window for that workspace. Never throws visibly.
++$ErrorActionPreference = 'SilentlyContinue'
++. (Join-Path $PSScriptRoot 'lib\cctoast-lib.ps1')
++
++$cwd = ConvertFrom-ToastLaunchUri $Uri
++if ([string]::IsNullOrWhiteSpace($cwd) -or -not (Test-Path -LiteralPath $cwd)) { exit 0 }
++
++# 1) open/reuse the VS Code window for this folder
++& code --reuse-window "$cwd" 2>$null
++
++# 2) best-effort: bring a matching VS Code window to the foreground
++try {
++    $leaf = Split-Path -Leaf $cwd
++    Add-Type -Namespace Native -Name Win -MemberDefinition @'
++[System.Runtime.InteropServices.DllImport("user32.dll")]
++public static extern bool SetForegroundWindow(System.IntPtr hWnd);
++'@
++    Start-Sleep -Milliseconds 400
++    $p = Get-Process -Name 'Code' -ErrorAction SilentlyContinue |
++        Where-Object { $_.MainWindowTitle -match [regex]::Escape($leaf) -and $_.MainWindowTitle -match 'Visual Studio Code' } |
++        Select-Object -First 1
++    if ($p) { [Native.Win]::SetForegroundWindow($p.MainWindowHandle) | Out-Null }
++} catch { }
++exit 0
+diff --git a/tests/handler.tests.ps1 b/tests/handler.tests.ps1
+new file mode 100644
+index 0000000..02b7647
+--- /dev/null
++++ b/tests/handler.tests.ps1
+@@ -0,0 +1,22 @@
++$ErrorActionPreference = 'Stop'
++. "$PSScriptRoot\assert.ps1"
++
++$work = Join-Path $env:TEMP ('cctoast-handler-' + [guid]::NewGuid().ToString('N'))
++New-Item -ItemType Directory -Path $work | Out-Null
++$log = Join-Path $work 'code-args.txt'
++# fake `code` that records its args
++"@echo off`r`n>>`"$log`" echo %*" | Set-Content (Join-Path $work 'code.cmd') -Encoding ascii
++
++$target = 'C:\Users\taka2\Desktop\final-project\metabolic-twin-fe'
++. "$PSScriptRoot\..\lib\cctoast-lib.ps1"
++$uri = New-ToastLaunchUri $target
++
++$env:PATH = "$work;$env:PATH"
++powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\..\cctoast-open.ps1" $uri | Out-Null
++
++Assert-True (Test-Path $log) "fake code was invoked"
++$line = Get-Content $log -Raw
++Assert-True ($line -match '--reuse-window') "code called with --reuse-window"
++Assert-True ($line -match 'metabolic-twin-fe') "code called with the target path"
++Remove-Item $work -Recurse -Force
++Write-Host "handler.tests PASSED"

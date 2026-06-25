@@ -106,8 +106,23 @@ $message = ($message -replace '\s+', ' ').Trim()
 if ([string]::IsNullOrEmpty($message)) { $message = Msg 'response_finished' 'Response finished' }
 if ($message.Length -gt $max) { $message = $message.Substring(0, $max).TrimEnd() + ' ...' }
 
+# --- ancestor PID chain (lets the VS Code extension focus the exact tab) ----
+function Get-AncestorPids {
+    $ids = @()
+    $cur = $PID
+    for ($i = 0; $i -lt 8 -and $cur; $i++) {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
+        if (-not $p) { break }
+        $ids += $p.ProcessId
+        $cur = $p.ParentProcessId
+    }
+    return ($ids -join ',')
+}
+
 # --- build launch URI + icon URI ------------------------------------------
-$launchUri = if ($cwd) { New-ToastLaunchUri $cwd $Scheme } else { "${Scheme}://open" }
+$pids = ''
+try { $pids = Get-AncestorPids } catch { $pids = '' }
+$launchUri = if ($cwd) { New-ToastLaunchUri $cwd $Scheme $pids } else { "${Scheme}://open" }
 $iconPath  = Join-Path $PSScriptRoot 'icon.png'
 $iconUri   = 'file:///' + ($iconPath -replace '\\', '/')
 $attribution = if ($workspace) { if ($branch) { "$workspace @ $branch" } else { $workspace } } else { '' }
