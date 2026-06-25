@@ -8,3 +8,6 @@ desktop.ini
 
 # VS Code extension build artifact
 vscode-extension/*.vsix
+
+# focus-request file dropped by the handler
+.cctoast-focus.json

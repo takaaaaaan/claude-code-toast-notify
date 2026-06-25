@@ -13,14 +13,17 @@ $cwd = ConvertFrom-ToastLaunchUri $Uri
 if ([string]::IsNullOrWhiteSpace($cwd) -or -not (Test-Path -LiteralPath $cwd)) { exit 0 }
 $leaf = Split-Path -Leaf $cwd
 
-# If the companion VS Code extension is installed, hand off to it: it focuses
-# the EXACT terminal tab (by matching the ancestor PID chain) and brings the
-# window forward. Without the extension, fall through to window-level focus.
+# Drop a focus request for the companion VS Code extension. Every VS Code window
+# watches this file; the one that owns Claude's terminal focuses the exact tab.
+# A no-op if the extension is not installed. Overridable for tests.
 $pids = Get-ToastLaunchPids $Uri
-$extInstalled = Test-Path (Join-Path $HOME '.vscode\extensions\claude-toast.terminal-focus-*')
-if ($extInstalled -and $pids) {
-    Start-Process "vscode://claude-toast.terminal-focus/focus?pids=$pids"
-    exit 0
+if ($pids) {
+    try {
+        $reqFile = if ($env:CCTOAST_FOCUS_FILE) { $env:CCTOAST_FOCUS_FILE } else { Join-Path $PSScriptRoot '.cctoast-focus.json' }
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $req = '{"pids":"' + $pids + '","ts":' + $ts + '}'
+        [System.IO.File]::WriteAllText($reqFile, $req, (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }
 }
 
 Add-Type -TypeDefinition @'

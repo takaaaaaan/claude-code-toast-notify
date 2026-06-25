@@ -2,7 +2,7 @@
   "name": "terminal-focus",
   "displayName": "Claude Toast Terminal Focus",
   "description": "Focus the exact VS Code terminal a Claude Code toast notification came from.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "claude-toast",
   "license": "MIT",
   "engines": {
@@ -12,6 +12,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onUri"
   ],
   "main": "./extension.js",
