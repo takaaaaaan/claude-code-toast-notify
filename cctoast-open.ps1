@@ -31,7 +31,7 @@ if ($pids) {
 
 # If the extension is installed it handles tab focus (and window reveal); the
 # handler must NOT do any cwd-based window logic (cwd != workspace folder).
-$extGlob = if ($env:CCTOAST_EXT_GLOB) { $env:CCTOAST_EXT_GLOB } else { Join-Path $HOME '.vscode\extensions\claude-toast.terminal-focus-*' }
+$extGlob = if ($env:CCTOAST_EXT_GLOB) { $env:CCTOAST_EXT_GLOB } else { Join-Path $HOME '.vscode\extensions\*.terminal-focus-*' }
 if (Test-Path $extGlob) { exit 0 }
 
 # No extension: best-effort raise of an already-open window whose title carries

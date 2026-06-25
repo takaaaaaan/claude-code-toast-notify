@@ -26,17 +26,22 @@ events. Zero dependencies — uses only built-in Windows + PowerShell.
    - A custom AUMID `Claude.Code.ToastNotify` with `DisplayName = "Claude Code"` and the project `icon.png`, so Windows displays the friendly name and icon in the toast header.
    - The `cctoast:` custom URI scheme pointing to `cctoast-open.ps1` in `~/.claude/`.
 
-3. **Clicking the toast** runs `cctoast-open.ps1`, which finds the **already-open** VS Code window for that workspace (matched by the folder name in the window title) and brings it to the foreground with `SetForegroundWindow` — **no new window is opened**. Only if no window for that workspace is currently open does it fall back to launching `code "<cwd>"`.
+3. **Clicking the toast** runs `cctoast-open.ps1`. If the companion extension is
+   installed, the handler only drops a focus-request file and exits (the
+   extension does the work). Without the extension, it does a best-effort raise
+   of an already-open VS Code window whose title carries the workspace name — and
+   **never opens a new window**.
 
 4. **Exact terminal-tab focus (optional)** — install the companion extension in
    [`vscode-extension/`](vscode-extension/). The hook embeds its **ancestor PID
    chain** in the toast URI; VS Code's `Terminal.processId` (the terminal's shell
-   PID) is always in that chain, so the extension focuses the terminal whose
-   `processId` matches — pinpointing Claude's tab even when several terminals
-   share one workspace folder. The PowerShell handler auto-detects the extension
-   (via `~/.vscode/extensions/claude-toast.terminal-focus-*`) and routes the
-   click to it through `vscode://claude-toast.terminal-focus/focus?pids=...`;
-   without the extension it falls back to window focus.
+   PID) is always in that chain. Every VS Code window runs the extension and
+   watches a shared request file (`~/.claude/.cctoast-focus.json`); the window
+   that owns the matching terminal focuses the exact tab. This pinpoints Claude's
+   tab even when several terminals share one workspace folder **and across
+   multiple windows**, independent of the shell's current directory. The
+   PowerShell handler auto-detects the extension via
+   `~/.vscode/extensions/*.terminal-focus-*`.
 
    > **Not implemented**: responding to Claude from an input box in the toast. That would require COM activation of the app and unreliable keystroke injection — deliberately left out.
 
