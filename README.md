@@ -25,9 +25,9 @@ events. Zero dependencies — uses only built-in Windows + PowerShell.
    - A custom AUMID `Claude.Code.ToastNotify` with `DisplayName = "Claude Code"` and the project `icon.png`, so Windows displays the friendly name and icon in the toast header.
    - The `cctoast:` custom URI scheme pointing to `cctoast-open.ps1` in `~/.claude/`.
 
-3. **Clicking the toast** runs `cctoast-open.ps1`, which calls `code --reuse-window "<cwd>"` and uses `SetForegroundWindow` to bring the matching VS Code window to the foreground.
+3. **Clicking the toast** runs `cctoast-open.ps1`, which finds the **already-open** VS Code window for that workspace (matched by the folder name in the window title) and brings it to the foreground with `SetForegroundWindow` — **no new window is opened**. Only if no window for that workspace is currently open does it fall back to launching `code "<cwd>"`.
 
-   > **Known limitation**: this focuses the VS Code *window*, not a specific integrated-terminal tab. VS Code exposes no public API for selecting a particular terminal instance.
+   > **Known limitation**: this focuses the VS Code *window*, not a specific integrated-terminal tab. VS Code exposes no public API for selecting a particular terminal instance. In practice the integrated terminal where Claude runs is already the active panel, so focusing the window returns you to it.
 
    > **Not implemented**: responding to Claude from an input box in the toast. That would require COM activation of the app and unreliable keystroke injection — deliberately left out.
 
