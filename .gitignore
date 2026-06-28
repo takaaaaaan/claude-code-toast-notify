@@ -11,3 +11,6 @@ vscode-extension/*.vsix
 
 # focus-request file dropped by the handler
 .cctoast-focus.json
+
+# local-only working notes / progress log (not for publishing)
+CLAUDE.md.local
